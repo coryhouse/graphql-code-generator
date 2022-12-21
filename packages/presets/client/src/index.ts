@@ -129,19 +129,15 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
       [`typescript-operations`]: typescriptOperationPlugin,
       [`typed-document-node`]: {
         ...typedDocumentNodePlugin,
-        ...(isPersistedOperations
-          ? {
-              plugin: async (...args: Array<any>) => {
-                try {
-                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                  // @ts-ignore
-                  return await typedDocumentNodePlugin.plugin(...args);
-                } finally {
-                  tdnFinished.resolve();
-                }
-              },
-            }
-          : {}),
+        plugin: async (...args: Array<any>) => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
+            return await typedDocumentNodePlugin.plugin(...args);
+          } finally {
+            tdnFinished.resolve();
+          }
+        },
       },
       [`gen-dts`]: gqlTagPlugin,
     };
