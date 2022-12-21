@@ -62,6 +62,8 @@ export type ClientPresetConfig = {
    * ```
    */
   gqlTagName?: string;
+  /** Persisted operations */
+  persistedOperations?: boolean;
 };
 
 const isOutputFolderLike = (baseOutputDir: string) => baseOutputDir.endsWith('/');
@@ -78,6 +80,8 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
         '[client-preset] providing typescript-based `plugins` with `preset: "client" leads to duplicated generated types'
       );
     }
+
+    const isPersistedOperations = options.presetConfig?.persistedOperations ?? false;
 
     const reexports: Array<string> = [];
 
@@ -115,12 +119,28 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
     });
     const sources = sourcesWithOperations.map(({ source }) => source);
 
+    const tdnFinished = createDeferred();
+    const persistedOperations = new Map<string, string>();
+
     const pluginMap = {
       ...options.pluginMap,
       [`add`]: addPlugin,
       [`typescript`]: typescriptPlugin,
       [`typescript-operations`]: typescriptOperationPlugin,
-      [`typed-document-node`]: typedDocumentNodePlugin,
+      [`typed-document-node`]: {
+        ...typedDocumentNodePlugin,
+        ...(isPersistedOperations
+          ? {
+              plugin: async (...args) => {
+                try {
+                  return await typedDocumentNodePlugin.plugin(...(args as any));
+                } finally {
+                  tdnFinished.resolve();
+                }
+              },
+            }
+          : {}),
+      },
       [`gen-dts`]: gqlTagPlugin,
     };
 
@@ -128,7 +148,15 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
       { [`add`]: { content: `/* eslint-disable */` } },
       { [`typescript`]: {} },
       { [`typescript-operations`]: {} },
-      { [`typed-document-node`]: {} },
+      {
+        [`typed-document-node`]: {
+          onPersistedOperation: isPersistedOperations
+            ? (hash: string, documentString: string) => {
+                persistedOperations.set(hash, documentString);
+              }
+            : undefined,
+        },
+      },
       ...options.plugins,
     ];
 
@@ -217,6 +245,31 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
         },
         documents: sources,
       },
+      ...(isPersistedOperations
+        ? [
+            {
+              filename: `${options.baseOutputDir}persisted-documents.json`,
+              plugins: [
+                {
+                  [`persisted-operations`]: {},
+                },
+              ],
+              pluginMap: {
+                [`persisted-operations`]: {
+                  plugin: async () => {
+                    await tdnFinished.promise;
+                    return {
+                      content: JSON.stringify(Object.fromEntries(persistedOperations.entries()), null, 2),
+                    };
+                  },
+                },
+              },
+              schema: options.schema,
+              config: {},
+              documents: sources,
+            },
+          ]
+        : []),
       ...(fragmentMaskingFileGenerateConfig ? [fragmentMaskingFileGenerateConfig] : []),
       ...(indexFileGenerateConfig ? [indexFileGenerateConfig] : []),
     ];
@@ -224,3 +277,18 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
 };
 
 export { babelOptimizerPlugin };
+
+type Deferred<T = void> = {
+  resolve: (value: T) => void;
+  reject: (value: unknown) => void;
+  promise: Promise<T>;
+};
+
+function createDeferred<T = void>(): Deferred<T> {
+  const d = {} as Deferred<T>;
+  d.promise = new Promise<T>((resolve, reject) => {
+    d.resolve = resolve;
+    d.reject = reject;
+  });
+  return d;
+}

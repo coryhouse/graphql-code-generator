@@ -7,6 +7,8 @@ import {
   FragmentSpreadNode,
   GraphQLSchema,
   Kind,
+  DefinitionNode,
+  DocumentNode,
 } from 'graphql';
 import { DepGraph } from 'dependency-graph';
 import gqlTag from 'graphql-tag';
@@ -17,6 +19,7 @@ import { basename, extname } from 'path';
 import { pascalCase } from 'change-case-all';
 import { generateFragmentImportStatement } from './imports.js';
 import { optimizeDocumentNode } from '@graphql-tools/optimize';
+import * as crypto from 'node:crypto';
 
 gqlTag.enableExperimentalFragmentVariables();
 
@@ -228,6 +231,7 @@ export interface ClientSideBasePluginConfig extends ParsedConfig {
   pureMagicComment?: boolean;
   optimizeDocumentNode: boolean;
   experimentalFragmentVariables?: boolean;
+  onPersistedOperation?: (hash: string, operationString: string) => void;
 }
 
 export class ClientSideBaseVisitor<
@@ -238,6 +242,8 @@ export class ClientSideBaseVisitor<
   protected _documents: Types.DocumentFile[] = [];
   protected _additionalImports: string[] = [];
   protected _imports = new Set<string>();
+
+  private _onPersistedOperation?: (hash: string, operationString: string) => void;
 
   constructor(
     protected _schema: GraphQLSchema,
@@ -273,6 +279,7 @@ export class ClientSideBaseVisitor<
     } as any);
 
     this._documents = documents;
+    this._onPersistedOperation = (rawConfig as any).onPersistedOperation;
 
     autoBind(this);
   }
@@ -346,6 +353,28 @@ export class ClientSideBaseVisitor<
     return documentStr;
   }
 
+  private _generateDocumentNodeHash(definitions: ReadonlyArray<DefinitionNode>, fragmentNames: Array<string>): string {
+    const allDefinitions = [...definitions];
+
+    for (const fragment of fragmentNames) {
+      const fragmentRecord = this._fragments.find(
+        f => f.name === fragment.substring(0, fragment.length - 'FragmentDoc'.length)
+      );
+      if (fragmentRecord) {
+        allDefinitions.push(fragmentRecord.node);
+      }
+    }
+
+    const operation = print({ kind: Kind.DOCUMENT, definitions: allDefinitions });
+    const shasum = crypto.createHash('sha1');
+    shasum.update(operation);
+    const hash = shasum.digest('hex');
+
+    this._onPersistedOperation(hash, operation);
+
+    return hash;
+  }
+
   protected _gql(node: FragmentDefinitionNode | OperationDefinitionNode): string {
     const fragments = this._transformFragments(node);
 
@@ -375,11 +404,24 @@ export class ClientSideBaseVisitor<
           ...fragments.map(name => `...${name}.definitions`),
         ].join();
 
-        return `{"kind":"${Kind.DOCUMENT}","definitions":[${definitions}]}`;
+        let hash: string | undefined;
+
+        if (this._onPersistedOperation) {
+          hash = this._generateDocumentNodeHash(gqlObj.definitions, fragments);
+        }
+
+        return `{${hash ? `"__hash": "${hash}", ` : ''}"kind":"${Kind.DOCUMENT}", "definitions":[${definitions}]}`;
       }
 
-      return JSON.stringify(gqlObj);
+      let hash: string | undefined;
+
+      if (this._onPersistedOperation) {
+        hash = this._generateDocumentNodeHash(gqlObj.definitions, fragments);
+      }
+
+      return JSON.stringify({ __hash: hash, ...gqlObj });
     }
+
     if (this.config.documentMode === DocumentMode.string) {
       return '`' + doc + '`';
     }
