@@ -131,9 +131,11 @@ export const preset: Types.OutputPreset<ClientPresetConfig> = {
         ...typedDocumentNodePlugin,
         ...(isPersistedOperations
           ? {
-              plugin: async (...args) => {
+              plugin: async (...args: Array<any>) => {
                 try {
-                  return await typedDocumentNodePlugin.plugin(...(args as any));
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                  // @ts-ignore
+                  return await typedDocumentNodePlugin.plugin(...args);
                 } finally {
                   tdnFinished.resolve();
                 }

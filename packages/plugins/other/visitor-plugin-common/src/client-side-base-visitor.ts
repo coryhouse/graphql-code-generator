@@ -8,7 +8,6 @@ import {
   GraphQLSchema,
   Kind,
   DefinitionNode,
-  DocumentNode,
 } from 'graphql';
 import { DepGraph } from 'dependency-graph';
 import gqlTag from 'graphql-tag';
