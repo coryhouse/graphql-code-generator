@@ -18,7 +18,7 @@ import { basename, extname } from 'path';
 import { pascalCase } from 'change-case-all';
 import { generateFragmentImportStatement } from './imports.js';
 import { optimizeDocumentNode } from '@graphql-tools/optimize';
-import * as crypto from 'node:crypto';
+import * as crypto from 'crypto';
 
 gqlTag.enableExperimentalFragmentVariables();
 
